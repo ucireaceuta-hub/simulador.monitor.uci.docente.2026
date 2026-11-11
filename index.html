@@ -1,0 +1,2138 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Simulador de Monitor UCI & Consola Docente Remota - Enfermería Crítica</title>
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- PeerJS para sincronización WebRTC P2P en tiempo real sin servidor -->
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+
+  <!-- Fuentes médicas especializadas -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;600;700&family=Inter:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+
+  <style>
+    .font-mono-lcd { font-family: 'Share Tech Mono', monospace; }
+    .font-monitor { font-family: 'Chakra Petch', sans-serif; }
+    body {
+      font-family: 'Inter', sans-serif;
+      background-color: #04070d;
+      color: #e2e8f0;
+      user-select: none;
+      overflow-x: hidden;
+    }
+
+    /* Brillos de fósforo de monitor de paciente */
+    .glow-green { text-shadow: 0 0 10px rgba(16, 185, 129, 0.7); }
+    .glow-red { text-shadow: 0 0 10px rgba(239, 68, 68, 0.7); }
+    .glow-cyan { text-shadow: 0 0 10px rgba(6, 182, 212, 0.7); }
+    .glow-yellow { text-shadow: 0 0 10px rgba(234, 179, 8, 0.7); }
+
+    /* Latido cardíaco */
+    @keyframes heartbeat {
+      0% { transform: scale(1); }
+      15% { transform: scale(1.35); }
+      30% { transform: scale(1); }
+      45% { transform: scale(1.2); }
+      60% { transform: scale(1); }
+    }
+    .beating { animation: heartbeat 0.55s ease-in-out; }
+
+    /* Alarmas visuales estándar médico */
+    @keyframes alarm-flash-red {
+      0%, 100% { background-color: rgba(239, 68, 68, 0.12); border-color: rgba(239, 68, 68, 0.8); }
+      50% { background-color: rgba(239, 68, 68, 0.45); border-color: #ef4444; }
+    }
+    @keyframes alarm-flash-yellow {
+      0%, 100% { background-color: rgba(234, 179, 8, 0.1); border-color: rgba(234, 179, 8, 0.6); }
+      50% { background-color: rgba(234, 179, 8, 0.35); border-color: #eab308; }
+    }
+    .alarm-active-red { animation: alarm-flash-red 0.8s infinite; }
+    .alarm-active-yellow { animation: alarm-flash-yellow 1.2s infinite; }
+
+    /* Alarma de Crisis Extrema / Código Azul (Letal) */
+    @keyframes alarm-flash-crisis {
+      0%, 100% { 
+        background-color: rgba(220, 38, 38, 0.25); 
+        border-color: #ef4444; 
+        box-shadow: 0 0 18px rgba(239, 68, 68, 0.6) inset, 0 0 25px rgba(239, 68, 68, 0.8);
+      }
+      50% { 
+        background-color: rgba(255, 0, 0, 0.7); 
+        border-color: #ffffff; 
+        box-shadow: 0 0 35px rgba(255, 255, 255, 0.9) inset, 0 0 45px rgba(239, 68, 68, 1);
+      }
+    }
+    .alarm-active-crisis { animation: alarm-flash-crisis 0.45s infinite; }
+
+    /* Rejilla de osciloscopio médico */
+    .bg-medical-grid {
+      background-color: #05080f;
+      background-image: 
+        linear-gradient(rgba(30, 41, 59, 0.3) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(30, 41, 59, 0.3) 1px, transparent 1px),
+        linear-gradient(rgba(30, 41, 59, 0.09) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(30, 41, 59, 0.09) 1px, transparent 1px);
+      background-size: 50px 50px, 50px 50px, 10px 10px, 10px 10px;
+    }
+
+    /* Scrollbars elegantes */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #080c14; }
+    ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #334155; }
+  </style>
+</head>
+
+<body class="min-h-screen flex flex-col bg-[#04070d] text-slate-100">
+
+  <!-- ========================================================================= -->
+  <!-- BARRA SUPERIOR: CONMUTADOR DE MODO Y ESTADO DE SINCRONIZACIÓN             -->
+  <!-- ========================================================================= -->
+  <header class="bg-[#090e18] border-b border-slate-800 px-3 md:px-5 py-2 flex flex-wrap items-center justify-between gap-3 text-xs md:text-sm z-30 shadow-md">
+    
+    <!-- Identificador de Modo y Paciente -->
+    <div class="flex items-center space-x-3">
+      <div class="flex rounded-lg overflow-hidden border border-slate-700 p-0.5 bg-black/40">
+        <button id="btn-mode-monitor" onclick="setAppMode('monitor')" class="px-2.5 py-1 text-xs font-bold rounded flex items-center gap-1.5 transition bg-emerald-600 text-white shadow">
+          <span>📺</span>
+          <span>Monitor UCI (Alumnos)</span>
+        </button>
+        <button id="btn-mode-remote" onclick="setAppMode('remote')" class="px-2.5 py-1 text-xs font-bold rounded flex items-center gap-1.5 text-slate-400 hover:text-white transition">
+          <span>📱</span>
+          <span>Mando Docente (Profesor)</span>
+        </button>
+      </div>
+
+      <div class="hidden sm:flex items-center gap-2 border-l border-slate-800 pl-3 text-slate-400 text-xs">
+        <span class="font-bold text-white">GONZÁLEZ M., C.</span>
+        <span>ID: 4892011</span>
+        <span class="bg-blue-950 text-blue-300 px-1.5 py-0.5 rounded text-[10px] font-mono">UCI-04</span>
+      </div>
+    </div>
+
+    <!-- Indicador de Sincronización WebRTC / Red Wi-Fi -->
+    <div class="flex items-center space-x-2 md:space-x-3 bg-black/50 border border-slate-800 px-3 py-1 rounded-lg">
+      <div class="flex items-center space-x-2">
+        <span id="sync-status-dot" class="w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping"></span>
+        <span id="sync-status-text" class="text-xs font-mono font-medium text-amber-300">Iniciando Sala...</span>
+      </div>
+
+      <div class="flex items-center gap-1.5 border-l border-slate-800 pl-2">
+        <span class="text-[11px] text-slate-400">PIN SALA:</span>
+        <span id="display-room-code" class="font-mono font-bold text-emerald-400 text-sm tracking-wider">----</span>
+      </div>
+
+      <button id="btn-copy-remote-link" onclick="copyInstructorLink()" title="Copiar enlace para abrir el mando en el móvil/tablet del profesor" class="bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 px-2 py-0.5 rounded text-[11px] flex items-center gap-1 transition">
+        <span>🔗</span>
+        <span class="hidden md:inline">Enlace Mando</span>
+      </button>
+
+      <button id="btn-open-remote-popup" onclick="openRemoteInNewWindow()" title="Abrir Mando en ventana secundaria / proyector extendido" class="bg-indigo-900/60 hover:bg-indigo-800 text-indigo-200 border border-indigo-700/60 px-2 py-0.5 rounded text-[11px] flex items-center gap-1 transition">
+        <span>↗</span>
+        <span class="hidden md:inline">Abrir en Otra Pestaña</span>
+      </button>
+    </div>
+
+    <!-- Controles Globales Rápidos -->
+    <div class="flex items-center space-x-2">
+      <button id="btn-global-audio" onclick="toggleAudio()" class="bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 px-2.5 py-1 rounded text-xs flex items-center gap-1 transition">
+        <span id="audio-icon">🔇</span>
+        <span id="audio-text">Audio: OFF</span>
+      </button>
+      <span id="live-clock" class="text-emerald-400 font-mono font-bold text-xs bg-slate-900/80 px-2 py-1 rounded border border-slate-800">--:--:--</span>
+    </div>
+  </header>
+
+  <!-- ========================================================================= -->
+  <!-- VISTA 1: MONITOR HEMODINÁMICO DE UCI (PANTALLA DE ALUMNOS / PROYECTOR)     -->
+  <!-- ========================================================================= -->
+  <div id="view-monitor" class="flex-1 flex flex-col p-2 md:p-3 gap-2 overflow-hidden">
+    
+    <!-- Banner de Alarma Clínica de Cabecera -->
+    <div id="alarm-banner" class="py-1 px-4 rounded flex items-center justify-between bg-slate-900/90 border border-slate-700 text-slate-300 transition-all duration-300">
+      <div class="flex items-center space-x-2.5">
+        <span id="alarm-indicator-symbol" class="text-emerald-400 text-sm">●</span>
+        <span id="alarm-banner-message" class="font-bold tracking-wider text-xs md:text-sm font-mono">MONITOR ACTIVO - PARÁMETROS HEMODINÁMICOS DENTRO DE RANGO</span>
+      </div>
+      <div class="flex items-center gap-2">
+        <span id="alarm-silence-countdown" class="hidden text-[10px] font-mono text-amber-300 bg-amber-950/70 border border-amber-800 px-2 py-0.5 rounded">SILENCIADO 120s</span>
+        <span id="alarm-severity-badge" class="text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-slate-800 text-slate-300">NORMAL</span>
+      </div>
+    </div>
+
+    <!-- Contenedor Principal del Monitor (Cuadrícula Osciloscopio + Valores Numéricos) -->
+    <div id="monitor-frame" class="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-2 bg-black rounded-lg border-2 border-slate-800 p-2 shadow-2xl relative overflow-hidden min-h-[500px]">
+      
+      <!-- LADO IZQUIERDO: TRAZADOS FISIOLÓGICOS DINÁMICOS A 60 FPS (CANVAS) -->
+      <div class="lg:col-span-9 flex flex-col bg-medical-grid rounded relative overflow-hidden border border-slate-900 h-full min-h-[420px]">
+        
+        <!-- Calibraciones en tiempo real -->
+        <div class="absolute top-2 left-3 z-10 text-[10px] text-slate-400 pointer-events-none flex space-x-6 font-mono">
+          <span>BAR: 25 mm/s</span>
+          <span>GANANCIA: II 10mm/mV</span>
+          <span>FILTRO: UCI MONITOR</span>
+        </div>
+
+        <!-- Indicador de Alarma Técnica de Incidente (Lead Off, Sensor caído) -->
+        <div id="technical-alarm-overlay" class="hidden absolute inset-x-0 top-12 z-20 mx-auto w-max bg-red-600 text-white font-mono font-bold text-xs px-4 py-1.5 rounded shadow-xl animate-pulse">
+          ⚠️ FALLO TÉCNICO: DESCONEXIÓN DE ELECTRODO ECG (LEAD OFF)
+        </div>
+
+        <!-- Indicador de Congelado (Freeze) -->
+        <div id="freeze-badge" class="hidden absolute top-2 right-3 z-20 bg-amber-500 text-black font-mono font-bold text-xs px-3 py-1 rounded shadow-lg animate-pulse">
+          ❄ TRAZADO CONGELADO (FREEZE REMOTO)
+        </div>
+
+        <canvas id="monitor-canvas" class="w-full h-full block cursor-crosshair"></canvas>
+      </div>
+
+      <!-- LADO DERECHO: CAJAS NUMÉRICAS MULTIPARAMÉTRICAS INTELLIVUE -->
+      <div class="lg:col-span-3 flex flex-col justify-between gap-2 text-white">
+        
+        <!-- CANAL 1: ECG / FRECUENCIA CARDÍACA -->
+        <div class="flex-1 bg-[#091510] border-l-4 border-emerald-500 rounded p-2.5 flex flex-col justify-between shadow">
+          <div class="flex items-center justify-between text-emerald-400">
+            <div class="flex items-center space-x-1.5">
+              <span class="text-xs font-bold tracking-wider">ECG DII</span>
+              <span id="heart-pulse-icon" class="text-red-500 text-sm">♥</span>
+            </div>
+            <span class="text-[10px] font-mono text-emerald-500/80">LÍM: 50 - 120</span>
+          </div>
+          <div class="flex items-baseline justify-between my-auto">
+            <span class="text-emerald-500 text-xs font-mono">lpm</span>
+            <span id="num-display-hr" class="text-5xl xl:text-6xl font-monitor font-bold text-emerald-400 glow-green tracking-tight">75</span>
+          </div>
+          <div class="text-[10px] text-emerald-400/80 flex justify-between font-mono border-t border-emerald-950/80 pt-1">
+            <span id="num-display-rhythm-name">SINUSAL</span>
+            <span>ST: +0.01 mV</span>
+          </div>
+        </div>
+
+        <!-- CANAL 2: PRESIÓN ARTERIAL INVASIVA (PAI) -->
+        <div class="flex-1 bg-[#180d10] border-l-4 border-red-500 rounded p-2.5 flex flex-col justify-between shadow">
+          <div class="flex items-center justify-between text-red-400">
+            <div class="flex items-center space-x-1.5">
+              <span class="text-xs font-bold tracking-wider">ART (PAI)</span>
+              <span id="art-damping-tag" class="text-[9px] bg-red-950 text-red-300 px-1 rounded font-mono">RADIAL</span>
+            </div>
+            <span class="text-[10px] font-mono text-red-500/80">PAM LÍM: 65</span>
+          </div>
+          <div class="flex items-baseline justify-between my-auto">
+            <div class="text-left font-mono">
+              <span class="text-red-400 text-xs block">mmHg</span>
+              <span class="text-red-300 text-xs">PAM: </span>
+              <span id="num-display-pam" class="text-2xl font-bold font-monitor text-red-400 glow-red">(93)</span>
+            </div>
+            <div class="text-right">
+              <span id="num-display-bp" class="text-4xl xl:text-5xl font-monitor font-bold text-red-500 glow-red tracking-tight">120/80</span>
+            </div>
+          </div>
+          <div class="text-[10px] text-red-400/80 flex justify-between font-mono border-t border-red-950/80 pt-1">
+            <span>PP: <span id="num-display-pp">40</span> mmHg</span>
+            <span>Dicrotismo: VÁLIDO</span>
+          </div>
+        </div>
+
+        <!-- CANAL 3: PULSIOXIMETRÍA SpO2 -->
+        <div class="flex-1 bg-[#09151a] border-l-4 border-cyan-500 rounded p-2.5 flex flex-col justify-between shadow">
+          <div class="flex items-center justify-between text-cyan-400">
+            <span class="text-xs font-bold tracking-wider">SpO2 PLETH</span>
+            <span class="text-[10px] font-mono text-cyan-500/80">LÍM: 90%</span>
+          </div>
+          <div class="flex items-baseline justify-between my-auto">
+            <div class="text-xs font-mono text-cyan-400">
+              <span>PI: <span id="num-display-pi" class="text-cyan-300 font-bold">3.8</span>%</span>
+              <span class="block text-[9px] text-cyan-500/70">Perfus. Tisular</span>
+            </div>
+            <div class="flex items-baseline">
+              <span id="num-display-spo2" class="text-5xl xl:text-6xl font-monitor font-bold text-cyan-400 glow-cyan">99</span>
+              <span class="text-cyan-400 text-sm font-bold ml-1">%</span>
+            </div>
+          </div>
+          <div class="text-[10px] text-cyan-400/80 flex justify-between font-mono border-t border-cyan-950/80 pt-1">
+            <span>Tono Audio: ACTIVO</span>
+            <span>Sensor: DEDO D</span>
+          </div>
+        </div>
+
+        <!-- CANAL 4: RESPIRACIÓN POR IMPEDANCIA (RESP) -->
+        <div class="flex-1 bg-[#19160a] border-l-4 border-yellow-500 rounded p-2.5 flex flex-col justify-between shadow">
+          <div class="flex items-center justify-between text-yellow-400">
+            <span class="text-xs font-bold tracking-wider">RESP (IMP)</span>
+            <span class="text-[10px] font-mono text-yellow-500/80">LÍM: 8 - 30</span>
+          </div>
+          <div class="flex items-baseline justify-between my-auto">
+            <span class="text-yellow-400 text-xs font-mono">rpm</span>
+            <span id="num-display-rr" class="text-5xl xl:text-6xl font-monitor font-bold text-yellow-400 glow-yellow">14</span>
+          </div>
+          <div class="text-[10px] text-yellow-400/80 flex justify-between font-mono border-t border-yellow-950/80 pt-1">
+            <span>Patrón: ESPONTÁNEO</span>
+            <span>Apnea: ALERTA 20s</span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================================================================= -->
+  <!-- VISTA 2: MANDO A DISTANCIA / CONSOLA DEL DOCENTE (TABLET / PORTÁTIL)      -->
+  <!-- ========================================================================= -->
+  <div id="view-remote" class="hidden flex-1 overflow-y-auto p-3 md:p-5 max-w-7xl mx-auto w-full space-y-4">
+    
+    <!-- Barra Superior de Control de la Sesión del Docente -->
+    <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl flex flex-wrap items-center justify-between gap-4 shadow-lg">
+      <div class="flex items-center space-x-3">
+        <div class="w-10 h-10 rounded-lg bg-indigo-950 border border-indigo-700/60 flex items-center justify-center text-xl">
+          🎮
+        </div>
+        <div>
+          <h2 class="font-bold text-white text-base">Consola de Control del Instructor - UCI</h2>
+          <p class="text-xs text-slate-400">Mando a distancia en tiempo real para modificar la clínica del paciente observado por los alumnos.</p>
+        </div>
+      </div>
+
+      <!-- Vinculación rápida por PIN de Monitor para el Docente -->
+      <div class="flex items-center space-x-2 bg-black/60 border border-slate-800 px-3 py-1.5 rounded-lg">
+        <label for="input-remote-room-pin" class="text-xs text-slate-400 font-medium">PIN Monitor Alumnos:</label>
+        <input type="text" id="input-remote-room-pin" maxlength="4" placeholder="1234" class="w-16 px-2 py-0.5 bg-slate-900 border border-slate-700 rounded text-center text-xs font-mono font-bold text-emerald-400 focus:outline-none focus:border-indigo-500">
+        <button onclick="changeRoomPinFromRemote()" class="bg-indigo-700 hover:bg-indigo-600 text-xs px-2.5 py-0.5 rounded text-white font-semibold transition">Vincular</button>
+      </div>
+
+      <!-- Cronómetro de la Simulación & Marcador de Debriefing -->
+      <div class="flex items-center space-x-2 bg-black/60 border border-slate-800 px-3 py-1.5 rounded-lg">
+        <span class="text-xs text-slate-400 font-medium">TIEMPO SIMULACIÓN:</span>
+        <span id="sim-timer-display" class="font-mono text-emerald-400 font-bold text-base">00:00:00</span>
+        <button onclick="toggleSimTimer()" id="btn-timer-toggle" class="bg-slate-800 hover:bg-slate-700 text-xs px-2 py-0.5 rounded text-white border border-slate-700">Iniciar</button>
+        <button onclick="resetSimTimer()" class="bg-slate-800 hover:bg-slate-700 text-xs px-2 py-0.5 rounded text-slate-300 border border-slate-700">Reset</button>
+        <button onclick="addDebriefNotePrompt()" class="bg-indigo-900/60 hover:bg-indigo-800 text-xs px-2 py-0.5 rounded text-indigo-300 border border-indigo-700">📌 Hito</button>
+      </div>
+
+      <!-- Acciones Rápidas del Instructor -->
+      <div class="flex items-center space-x-2">
+        <button onclick="sendRemoteCommand('SILENCE_ALARM')" class="bg-amber-950/60 hover:bg-amber-900 border border-amber-600/60 text-amber-300 px-3 py-1.5 rounded text-xs font-semibold flex items-center gap-1.5 transition">
+          <span>🔕</span>
+          <span>Silenciar Alumnos (120s)</span>
+        </button>
+        <button id="btn-remote-freeze" onclick="sendRemoteCommand('TOGGLE_FREEZE')" class="bg-indigo-950/60 hover:bg-indigo-900 border border-indigo-500/60 text-indigo-300 px-3 py-1.5 rounded text-xs font-semibold flex items-center gap-1.5 transition">
+          <span>❄</span>
+          <span id="remote-freeze-label">Congelar Monitor</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- SECCIÓN 1: ESCENARIOS CLÍNICOS CRÍTICOS EN 1-CLIC -->
+    <div class="bg-slate-900/90 border border-slate-800 rounded-xl p-4 shadow">
+      <div class="flex items-center justify-between mb-3 border-b border-slate-800 pb-2">
+        <h3 class="text-sm font-bold text-slate-200 flex items-center gap-2">
+          <span class="text-red-400">🚨</span>
+          <span>Inyector de Escenarios Clínicos de UCI (1 Clic)</span>
+        </h3>
+        <span class="text-[11px] text-slate-400">Modifica instantáneamente ritmo, curvas arteriales y saturación</span>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5">
+        <button onclick="triggerScenario('arrest_vf')" class="p-3 rounded-lg bg-red-950/40 hover:bg-red-900/60 border border-red-700/60 text-left transition flex flex-col justify-between group">
+          <div>
+            <span class="text-xs font-bold text-red-300 group-hover:text-white block">PCR: Fibrilación Ventricular</span>
+            <span class="text-[10px] text-red-400/80">Colapso inmediato, PA nula</span>
+          </div>
+          <span class="mt-2 text-[10px] bg-red-950 text-red-200 px-1.5 py-0.5 rounded font-mono font-bold self-start">DESFIBRILACIÓN</span>
+        </button>
+
+        <button onclick="triggerScenario('septic_shock')" class="p-3 rounded-lg bg-amber-950/30 hover:bg-amber-900/50 border border-amber-700/60 text-left transition flex flex-col justify-between group">
+          <div>
+            <span class="text-xs font-bold text-amber-300 group-hover:text-white block">Shock Séptico / Vasopléjico</span>
+            <span class="text-[10px] text-amber-400/80">Taquicardia, PAM &lt; 50, FR 32</span>
+          </div>
+          <span class="mt-2 text-[10px] bg-amber-950 text-amber-200 px-1.5 py-0.5 rounded font-mono font-bold self-start">NORADRENALINA</span>
+        </button>
+
+        <button onclick="triggerScenario('arrest_pea')" class="p-3 rounded-lg bg-red-950/50 hover:bg-red-900/70 border border-red-500/80 text-left transition flex flex-col justify-between group">
+          <div>
+            <span class="text-xs font-bold text-red-200 group-hover:text-white block">PCR: Actividad Eléctrica Sin Pulso</span>
+            <span class="text-[10px] text-red-300/80">ECG presente pero PA nula y sin SpO2</span>
+          </div>
+          <span class="mt-2 text-[10px] bg-red-900 text-white px-1.5 py-0.5 rounded font-mono font-bold self-start animate-pulse">RCP + ADRENALINA</span>
+        </button>
+
+        <button onclick="triggerScenario('hypovolemia')" class="p-3 rounded-lg bg-orange-950/30 hover:bg-orange-900/50 border border-orange-700/60 text-left transition flex flex-col justify-between group">
+          <div>
+            <span class="text-xs font-bold text-orange-300 group-hover:text-white block">Shock Hipovolémico / Sangrado</span>
+            <span class="text-[10px] text-orange-400/80">Presión de pulso estrecha (80/55)</span>
+          </div>
+          <span class="mt-2 text-[10px] bg-orange-950 text-orange-200 px-1.5 py-0.5 rounded font-mono font-bold self-start">VOLUMEN / HEMO</span>
+        </button>
+
+        <button onclick="triggerScenario('acute_hypoxia')" class="p-3 rounded-lg bg-cyan-950/30 hover:bg-cyan-900/50 border border-cyan-700/60 text-left transition flex flex-col justify-between group">
+          <div>
+            <span class="text-xs font-bold text-cyan-300 group-hover:text-white block">Fallo Respiratorio / Hipoxia</span>
+            <span class="text-[10px] text-cyan-400/80">SpO2 72%, FR 36 rpm, HTA reflex</span>
+          </div>
+          <span class="mt-2 text-[10px] bg-cyan-950 text-cyan-200 px-1.5 py-0.5 rounded font-mono font-bold self-start">VMI / OXÍGENO</span>
+        </button>
+
+        <button onclick="triggerScenario('rosc')" class="p-3 rounded-lg bg-emerald-950/30 hover:bg-emerald-900/50 border border-emerald-700/60 text-left transition flex flex-col justify-between group">
+          <div>
+            <span class="text-xs font-bold text-emerald-300 group-hover:text-white block">ROSC (Retorno Circulación)</span>
+            <span class="text-[10px] text-emerald-400/80">Estabilización post-reanimación</span>
+          </div>
+          <span class="mt-2 text-[10px] bg-emerald-950 text-emerald-200 px-1.5 py-0.5 rounded font-mono font-bold self-start">CUIDADOS POST-PCR</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- SECCIÓN 2: CATÁLOGO DE 10 ARRITMIAS EN TIEMPO REAL -->
+    <div class="bg-slate-900/90 border border-slate-800 rounded-xl p-4 shadow">
+      <div class="flex items-center justify-between mb-3 border-b border-slate-800 pb-2">
+        <h3 class="text-sm font-bold text-slate-200 flex items-center gap-2">
+          <span class="text-amber-400">⚡</span>
+          <span>Selector Rápido de Ritmos y Arritmias Cardíacas</span>
+        </h3>
+        <span class="text-[11px] text-slate-400">Haz clic para cambiar el ECG del alumno</span>
+      </div>
+
+      <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2" id="remote-rhythm-grid">
+        <!-- Generados dinámicamente en JS para facilitar selección -->
+      </div>
+    </div>
+
+    <!-- SECCIÓN 3: CONTROLADORES DESLIZANTES DE PARÁMETROS HEMODINÁMICOS -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      
+      <!-- Controles Manuales con Sliders -->
+      <div class="lg:col-span-2 bg-slate-900/90 border border-slate-800 rounded-xl p-4 shadow space-y-3">
+        <div class="flex items-center justify-between border-b border-slate-800 pb-2">
+          <h3 class="text-sm font-bold text-slate-200 flex items-center gap-2">
+            <span>🎚</span>
+            <span>Ajuste Dinámico de Constantes Vitales</span>
+          </h3>
+          <span class="text-[11px] text-emerald-400 font-mono">Sincronización P2P Continua</span>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <!-- Slider FC -->
+          <div class="bg-black/40 p-3 rounded-lg border border-slate-800">
+            <div class="flex justify-between items-center mb-1">
+              <span class="text-xs font-bold text-emerald-400">Frecuencia Cardíaca (FC)</span>
+              <span id="remote-label-hr" class="font-mono font-bold text-emerald-300 text-sm">75 lpm</span>
+            </div>
+            <input type="range" id="remote-slider-hr" min="20" max="220" value="75" oninput="onRemoteParamChange('hr', this.value)" class="w-full accent-emerald-500 cursor-pointer">
+          </div>
+
+          <!-- Slider SpO2 -->
+          <div class="bg-black/40 p-3 rounded-lg border border-slate-800">
+            <div class="flex justify-between items-center mb-1">
+              <span class="text-xs font-bold text-cyan-400">Saturación O2 (SpO2)</span>
+              <span id="remote-label-spo2" class="font-mono font-bold text-cyan-300 text-sm">99 %</span>
+            </div>
+            <input type="range" id="remote-slider-spo2" min="50" max="100" value="99" oninput="onRemoteParamChange('spo2', this.value)" class="w-full accent-cyan-500 cursor-pointer">
+          </div>
+
+          <!-- Slider PAS -->
+          <div class="bg-black/40 p-3 rounded-lg border border-slate-800">
+            <div class="flex justify-between items-center mb-1">
+              <span class="text-xs font-bold text-red-400">Presión Arterial Sistólica (PAS)</span>
+              <span id="remote-label-pas" class="font-mono font-bold text-red-300 text-sm">120 mmHg</span>
+            </div>
+            <input type="range" id="remote-slider-pas" min="40" max="240" step="2" value="120" oninput="onRemoteParamChange('pas', this.value)" class="w-full accent-red-500 cursor-pointer">
+          </div>
+
+          <!-- Slider PAD -->
+          <div class="bg-black/40 p-3 rounded-lg border border-slate-800">
+            <div class="flex justify-between items-center mb-1">
+              <span class="text-xs font-bold text-red-400">Presión Arterial Diastólica (PAD)</span>
+              <span id="remote-label-pad" class="font-mono font-bold text-red-300 text-sm">80 mmHg</span>
+            </div>
+            <input type="range" id="remote-slider-pad" min="20" max="140" step="2" value="80" oninput="onRemoteParamChange('pad', this.value)" class="w-full accent-red-500 cursor-pointer">
+          </div>
+
+          <!-- Slider FR -->
+          <div class="bg-black/40 p-3 rounded-lg border border-slate-800">
+            <div class="flex justify-between items-center mb-1">
+              <span class="text-xs font-bold text-yellow-400">Frecuencia Respiratoria (FR)</span>
+              <span id="remote-label-rr" class="font-mono font-bold text-yellow-300 text-sm">14 rpm</span>
+            </div>
+            <input type="range" id="remote-slider-rr" min="4" max="50" value="14" oninput="onRemoteParamChange('rr', this.value)" class="w-full accent-yellow-500 cursor-pointer">
+          </div>
+
+          <!-- PAM Calculada en vivo -->
+          <div class="bg-black/40 p-3 rounded-lg border border-slate-800 flex items-center justify-between">
+            <div>
+              <span class="text-[11px] text-slate-400 block font-mono">PAM RESULTANTE:</span>
+              <span class="text-xs text-slate-300">[PAS + (2 × PAD)] / 3</span>
+            </div>
+            <span id="remote-label-pam" class="text-2xl font-bold font-monitor text-red-400 glow-red">93.3 mmHg</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- SECCIÓN 4: INCIDENTES TÉCNICOS DE ENFERMERÍA (TALLER DE SOLUCIÓN DE PROBLEMAS) -->
+      <div class="bg-slate-900/90 border border-slate-800 rounded-xl p-4 shadow space-y-3">
+        <div class="border-b border-slate-800 pb-2">
+          <h3 class="text-sm font-bold text-purple-300 flex items-center gap-1.5">
+            <span>🛠</span>
+            <span>Incidentes Técnicos de Monitorización</span>
+          </h3>
+          <p class="text-[11px] text-slate-400 mt-0.5">Evalúa si los alumnos reconocen si la falla es del paciente o de los sensores.</p>
+        </div>
+
+        <div class="space-y-2">
+          <!-- Desconexión Electrodo ECG -->
+          <button id="btn-incident-lead-off" onclick="toggleTechnicalIncident('lead_off')" class="w-full p-2.5 rounded-lg bg-black/40 border border-slate-800 hover:border-purple-600 text-left transition flex items-center justify-between">
+            <div>
+              <span class="text-xs font-bold text-slate-200 block">Electrodo ECG Desprendido</span>
+              <span class="text-[10px] text-slate-400">Genera trazado plano punteado y alarma Lead Off</span>
+            </div>
+            <span id="badge-incident-lead-off" class="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded font-mono">INACTIVO</span>
+          </button>
+
+          <!-- Sensor de SpO2 Caído -->
+          <button id="btn-incident-spo2-off" onclick="toggleTechnicalIncident('spo2_off')" class="w-full p-2.5 rounded-lg bg-black/40 border border-slate-800 hover:border-purple-600 text-left transition flex items-center justify-between">
+            <div>
+              <span class="text-xs font-bold text-slate-200 block">Sensor SpO2 Descolocado</span>
+              <span class="text-[10px] text-slate-400">Pérdida de onda pletismográfica y silencio de tono</span>
+            </div>
+            <span id="badge-incident-spo2-off" class="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded font-mono">INACTIVO</span>
+          </button>
+
+          <!-- Línea Arterial Amortiguada -->
+          <button id="btn-incident-art-damped" onclick="toggleTechnicalIncident('art_damped')" class="w-full p-2.5 rounded-lg bg-black/40 border border-slate-800 hover:border-purple-600 text-left transition flex items-center justify-between">
+            <div>
+              <span class="text-xs font-bold text-slate-200 block">Línea Arterial Amortiguada</span>
+              <span class="text-[10px] text-slate-400">Pérdida de muesca dícrota (burbuja/acodamiento)</span>
+            </div>
+            <span id="badge-incident-art-damped" class="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded font-mono">INACTIVO</span>
+          </button>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- SECCIÓN 5: REGISTRO CRONOLÓGICO PARA DEBRIEFING DOCENTE -->
+    <div class="bg-slate-900/90 border border-slate-800 rounded-xl p-4 shadow space-y-2">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-2">
+        <h3 class="text-sm font-bold text-slate-200 flex items-center gap-2">
+          <span>📋</span>
+          <span>Registro Cronológico de la Simulación (Para Debriefing Clínico)</span>
+        </h3>
+        <button onclick="exportDebriefLog()" class="bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs px-2.5 py-1 rounded transition">
+          💾 Copiar Resumen
+        </button>
+      </div>
+
+      <div class="bg-black/60 rounded-lg p-2.5 max-h-40 overflow-y-auto font-mono text-xs text-slate-300 space-y-1" id="debrief-log-container">
+        <div class="text-slate-500 italic">[00:00:00] Sesión de simulación iniciada. Estado basal: Ritmo Sinusal Normal.</div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ========================================================================= -->
+  <!-- MODAL / NOTIFICACIÓN RÁPIDA (TOAST)                                       -->
+  <!-- ========================================================================= -->
+  <div id="toast-message" class="fixed bottom-4 right-4 z-50 transform translate-y-20 opacity-0 transition-all duration-300 bg-slate-900 text-white border border-slate-700 px-4 py-2.5 rounded-lg shadow-2xl flex items-center space-x-2 text-xs">
+    <span id="toast-icon">ℹ️</span>
+    <span id="toast-text">Mensaje informativo</span>
+  </div>
+
+  <!-- ========================================================================= -->
+  <!-- SCRIPT Y ARQUITECTURA DE SINCRONIZACIÓN WEBRTC + OSCILOSCOPIO            -->
+  <!-- ========================================================================= -->
+  <script>
+    /**
+     * SIMULADOR MULTIPARAMÉTRICO Y SISTEMA DOCENTE REMOTO EN TIEMPO REAL
+     * Diseñado para docencia universitaria de Enfermería en Cuidados Críticos.
+     */
+
+    // --- CATÁLOGO CLÍNICO DE ARRITMIAS ---
+    const RHYTHMS_DATA = {
+      sinus: {
+        id: 'sinus',
+        name: 'Ritmo Sinusal',
+        tag: 'SINUSAL',
+        hr: 75, pas: 120, pad: 80, spo2: 99, rr: 14,
+        isArrest: false, isLethal: false, isCrisis: false,
+        msg: 'RITMO SINUSAL NORMAL - PARÁMETROS EN RANGO'
+      },
+      bradycardia: {
+        id: 'bradycardia',
+        name: 'Bradicardia Sinusal Severa',
+        tag: 'BRADICARDIA',
+        hr: 38, pas: 100, pad: 60, spo2: 96, rr: 12,
+        isArrest: false, isLethal: false, isCrisis: false,
+        msg: 'AVISO: BRADICARDIA SEVERA (FC < 40 lpm)'
+      },
+      tachycardia: {
+        id: 'tachycardia',
+        name: 'Taquicardia Sinusal',
+        tag: 'TAQUICARDIA',
+        hr: 145, pas: 135, pad: 85, spo2: 96, rr: 24,
+        isArrest: false, isLethal: false, isCrisis: false,
+        msg: 'AVISO: TAQUICARDIA SINUSAL COMPENSADORA'
+      },
+      afib: {
+        id: 'afib',
+        name: 'Fibrilación Auricular (RVR)',
+        tag: 'FA RVR',
+        hr: 135, pas: 110, pad: 72, spo2: 94, rr: 20,
+        isArrest: false, isLethal: false, isCrisis: false,
+        msg: 'ALERTA: FA CON RESPUESTA VENTRICULAR RÁPIDA'
+      },
+      aflutter: {
+        id: 'aflutter',
+        name: 'Flutter Auricular 2:1',
+        tag: 'FLUTTER 2:1',
+        hr: 150, pas: 115, pad: 75, spo2: 95, rr: 18,
+        isArrest: false, isLethal: false, isCrisis: false,
+        msg: 'ALERTA: FLUTTER AURICULAR CONDUCCIÓN 2:1'
+      },
+      vtach: {
+        id: 'vtach',
+        name: 'Taquicardia Ventricular (TV)',
+        tag: 'TV MONOMORFA',
+        hr: 180, pas: 55, pad: 30, spo2: 80, rr: 28,
+        isArrest: false, isLethal: true, isCrisis: true,
+        msg: '¡CRISIS LETAL!: TAQUICARDIA VENTRICULAR - HIPOPERFUSIÓN SEVERA'
+      },
+      vfib: {
+        id: 'vfib',
+        name: 'Fibrilación Ventricular (FV)',
+        tag: 'FIB. VENTRICULAR',
+        hr: 0, pas: 15, pad: 10, spo2: 0, rr: 0,
+        isArrest: true, isLethal: true, isCrisis: true,
+        msg: '¡PARADA CARDIORRESPIRATORIA!: FV - DESFIBRILACIÓN INMEDIATA'
+      },
+      asystole: {
+        id: 'asystole',
+        name: 'Asistolia',
+        tag: 'ASISTOLIA',
+        hr: 0, pas: 10, pad: 5, spo2: 0, rr: 0,
+        isArrest: true, isLethal: true, isCrisis: true,
+        msg: '¡PARADA CARDIORRESPIRATORIA!: ASISTOLIA - INICIAR RCP Y ADRENALINA'
+      },
+      pea: {
+        id: 'pea',
+        name: 'Actividad Eléctrica Sin Pulso (AESP)',
+        tag: 'AESP / PEA',
+        hr: 54, pas: 12, pad: 8, spo2: 0, rr: 2,
+        isArrest: true, isLethal: true, isCrisis: true,
+        msg: '¡PARADA CARDIORRESPIRATORIA!: AESP - RITMO NO DESFIBRILABLE (RCP + ADRENALINA)'
+      },
+      avblock: {
+        id: 'avblock',
+        name: 'Bloqueo AV Completo (3er G)',
+        tag: 'BLOQUEO AV 3º',
+        hr: 32, pas: 86, pad: 50, spo2: 91, rr: 16,
+        isArrest: false, isLethal: true, isCrisis: false,
+        msg: '¡CRÍTICA!: BLOQUEO AV COMPLETO - PREPARAR MARCAPASOS'
+      },
+      bigeminy: {
+        id: 'bigeminy',
+        name: 'Bigeminismo Ventricular',
+        tag: 'BIGEMINISMO',
+        hr: 64, pas: 118, pad: 74, spo2: 95, rr: 15,
+        isArrest: false, isLethal: false, isCrisis: false,
+        msg: 'AVISO: EXTRASISTOLIA VENTRICULAR BIGEMINADA'
+      }
+    };
+
+    // --- ESTADO GLOBAL COMPARTIDO DEL MONITOR Y DOCENTE ---
+    const AppState = {
+      mode: 'monitor', // 'monitor' | 'remote'
+      roomCode: '',
+      
+      // Parámetros fisiológicos
+      rhythmId: 'sinus',
+      hr: 75,
+      pas: 120,
+      pad: 80,
+      pam: 93.3,
+      spo2: 99,
+      rr: 14,
+      pi: 3.8,
+
+      // Incidentes técnicos de sensores
+      incidents: {
+        lead_off: false,
+        spo2_off: false,
+        art_damped: false
+      },
+
+      // Controles y alarmas
+      isFrozen: false,
+      audioEnabled: false,
+      audioSilencedUntil: 0,
+      alarmLevel: 'normal', // 'normal' | 'yellow' | 'red'
+      alarmMsg: 'MONITOR ACTIVO - PARÁMETROS HEMODINÁMICOS DENTRO DE RANGO',
+
+      // Bucle de trazados
+      t: 0,
+      cardiacPhase: 0,
+      respPhase: 0,
+      afibInterval: 0.8,
+      isBigeminyPVC: false,
+
+      // Simulación & cronómetro
+      simTimerActive: false,
+      simSeconds: 0,
+      debriefLog: []
+    };
+
+    // --- COMUNICACIONES: WEBRTC (PeerJS) + BROADCASTCHANNEL LOCAL ---
+    let peer = null;
+    let peerConnection = null;
+    let localBroadcastChannel = null;
+
+    // Obtener o generar código de sala desde URL o aleatorio de 4 dígitos
+    function initRoomIdentity() {
+      let urlRoom = null;
+      let urlMode = null;
+      try {
+        if (window.location && window.location.search) {
+          const urlParams = new URLSearchParams(window.location.search);
+          urlRoom = urlParams.get('room');
+          urlMode = urlParams.get('mode');
+        }
+      } catch (e) {
+        console.debug('No se pudieron leer parámetros URL en este contexto:', e);
+      }
+
+      if (urlRoom && /^[0-9]{4}$/.test(urlRoom)) {
+        AppState.roomCode = urlRoom;
+      } else {
+        AppState.roomCode = Math.floor(1000 + Math.random() * 9000).toString();
+      }
+
+      document.getElementById('display-room-code').innerText = AppState.roomCode;
+      const pinInput = document.getElementById('input-remote-room-pin');
+      if (pinInput) pinInput.value = AppState.roomCode;
+
+      if (urlMode === 'remote') {
+        setAppMode('remote', false);
+      } else {
+        setAppMode('monitor', false);
+      }
+
+      // Canal local BroadcastChannel para comunicación instantánea en la misma máquina / proyector
+      try {
+        localBroadcastChannel = new BroadcastChannel('icu_room_' + AppState.roomCode);
+        localBroadcastChannel.onmessage = (event) => {
+          handleIncomingNetworkMessage(event.data);
+        };
+      } catch (e) {
+        console.warn('BroadcastChannel no soportado en este entorno', e);
+      }
+
+      // Inicializar conexión P2P PeerJS
+      initPeerJS();
+    }
+
+    function initPeerJS() {
+      // PeerJS ID structure: uci-mon-{room} para el monitor, uci-rem-{room}-{random} para mandos
+      const isMonitor = AppState.mode === 'monitor';
+      const peerId = isMonitor 
+        ? `uci-hemo-mon-${AppState.roomCode}` 
+        : `uci-hemo-rem-${AppState.roomCode}-${Math.floor(Math.random()*1000)}`;
+
+      if (peer) {
+        try { peer.destroy(); } catch (e) {}
+      }
+
+      peer = new Peer(peerId, {
+        debug: 1,
+        config: {
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:global.stun.twilio.com:3478' }
+          ]
+        }
+      });
+
+      peer.on('open', (id) => {
+        updateSyncStatus(true, isMonitor ? 'Monitor Online (Esperando Mando)' : 'Mando Conectando...');
+        if (!isMonitor) {
+          connectToMonitorPeer();
+        }
+      });
+
+      peer.on('connection', (conn) => {
+        // Al recibir conexión entrante en el monitor
+        peerConnection = conn;
+        setupConnectionListeners(conn);
+        updateSyncStatus(true, 'Profesor / Mando Conectado');
+        showToast('🎮 Mando a distancia del profesor conectado exitosamente');
+
+        // Enviar estado actual completo al mando
+        broadcastFullState();
+      });
+
+      peer.on('error', (err) => {
+        console.warn('Aviso de PeerJS:', err.type);
+        updateSyncStatus(true, 'Sincronizado vía Canal Local');
+      });
+    }
+
+    function connectToMonitorPeer() {
+      if (!peer || peer.destroyed) return;
+      const targetId = `uci-hemo-mon-${AppState.roomCode}`;
+      const conn = peer.connect(targetId, { reliable: true });
+
+      conn.on('open', () => {
+        peerConnection = conn;
+        setupConnectionListeners(conn);
+        updateSyncStatus(true, 'Conectado al Monitor UCI');
+        showToast('✅ Conectado al monitor de los alumnos');
+      });
+    }
+
+    function setupConnectionListeners(conn) {
+      conn.on('data', (data) => {
+        handleIncomingNetworkMessage(data);
+      });
+      conn.on('close', () => {
+        updateSyncStatus(false, 'Mando Desconectado');
+      });
+    }
+
+    function updateSyncStatus(connected, text) {
+      const dot = document.getElementById('sync-status-dot');
+      const label = document.getElementById('sync-status-text');
+      label.innerText = text;
+
+      if (connected) {
+        dot.className = 'w-2.5 h-2.5 rounded-full bg-emerald-400';
+      } else {
+        dot.className = 'w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping';
+      }
+    }
+
+    // Difusión de mensajes a través de WebRTC y BroadcastChannel simultáneamente
+    function sendNetworkMessage(type, payload) {
+      const msg = { type, payload, sender: AppState.mode, timestamp: Date.now() };
+
+      // 1. WebRTC PeerJS
+      if (peerConnection && peerConnection.open) {
+        peerConnection.send(msg);
+      }
+
+      // 2. BroadcastChannel para sincronización inmediata en la misma máquina
+      if (localBroadcastChannel) {
+        localBroadcastChannel.postMessage(msg);
+      }
+    }
+
+    function handleIncomingNetworkMessage(msg) {
+      if (!msg || !msg.type) return;
+
+      switch (msg.type) {
+        case 'SYNC_STATE':
+          applyFullState(msg.payload);
+          break;
+        case 'CHANGE_PARAM':
+          applyParamChange(msg.payload.key, msg.payload.value);
+          break;
+        case 'CHANGE_RHYTHM':
+          setRhythm(msg.payload.rhythmId, false);
+          break;
+        case 'TRIGGER_SCENARIO':
+          applyScenario(msg.payload.scenarioKey, false);
+          break;
+        case 'TOGGLE_INCIDENT':
+          applyTechnicalIncident(msg.payload.incidentKey, msg.payload.state, false);
+          break;
+        case 'TOGGLE_FREEZE':
+          toggleFreezeState(false);
+          break;
+        case 'SILENCE_ALARM':
+          silenceAlarm(120, false);
+          break;
+        case 'ADD_DEBRIEF_LOG':
+          addDebriefEntry(msg.payload.text, false);
+          break;
+      }
+    }
+
+    function broadcastFullState() {
+      sendNetworkMessage('SYNC_STATE', {
+        rhythmId: AppState.rhythmId,
+        hr: AppState.hr,
+        pas: AppState.pas,
+        pad: AppState.pad,
+        spo2: AppState.spo2,
+        rr: AppState.rr,
+        incidents: AppState.incidents,
+        isFrozen: AppState.isFrozen,
+        audioSilencedUntil: AppState.audioSilencedUntil
+      });
+    }
+
+    function applyFullState(data) {
+      if (!data) return;
+      AppState.rhythmId = data.rhythmId;
+      AppState.hr = data.hr;
+      AppState.pas = data.pas;
+      AppState.pad = data.pad;
+      AppState.spo2 = data.spo2;
+      AppState.rr = data.rr;
+      AppState.incidents = data.incidents || AppState.incidents;
+      AppState.isFrozen = data.isFrozen;
+      AppState.audioSilencedUntil = data.audioSilencedUntil || 0;
+
+      syncRemoteControlsUI();
+      updateNumericDisplays();
+      updateIncidentUI();
+    }
+
+    // --- CAMBIO DE VISTA ENTRE MONITOR Y MANDO ---
+    function setAppMode(newMode, shouldPushUrl = true) {
+      AppState.mode = newMode;
+      const vMonitor = document.getElementById('view-monitor');
+      const vRemote = document.getElementById('view-remote');
+      const bMonitor = document.getElementById('btn-mode-monitor');
+      const bRemote = document.getElementById('btn-mode-remote');
+
+      if (newMode === 'monitor') {
+        vMonitor.classList.remove('hidden');
+        vRemote.classList.add('hidden');
+        bMonitor.className = 'px-2.5 py-1 text-xs font-bold rounded flex items-center gap-1.5 transition bg-emerald-600 text-white shadow';
+        bRemote.className = 'px-2.5 py-1 text-xs font-bold rounded flex items-center gap-1.5 text-slate-400 hover:text-white transition';
+        setTimeout(resizeCanvas, 60);
+      } else {
+        vMonitor.classList.add('hidden');
+        vRemote.classList.remove('hidden');
+        bRemote.className = 'px-2.5 py-1 text-xs font-bold rounded flex items-center gap-1.5 transition bg-indigo-600 text-white shadow';
+        bMonitor.className = 'px-2.5 py-1 text-xs font-bold rounded flex items-center gap-1.5 text-slate-400 hover:text-white transition';
+        syncRemoteControlsUI();
+      }
+
+      // Guarda estado en URL únicamente si el protocolo es http/https y no blob/sandboxed
+      if (shouldPushUrl) {
+        try {
+          if (window.location && window.location.protocol !== 'blob:' && !window.location.href.startsWith('blob:')) {
+            const url = new URL(window.location.href);
+            url.searchParams.set('mode', newMode);
+            url.searchParams.set('room', AppState.roomCode);
+            window.history.replaceState({}, '', url.toString());
+          }
+        } catch (err) {
+          // Previene SecurityError en entornos iframes sandboxed o blob URLs
+          console.debug('Historial no modificable en este entorno:', err);
+        }
+      }
+    }
+
+    // Utilidad de portapapeles segura y compatible con iframes
+    function copyTextToClipboard(text) {
+      try {
+        const dummyInput = document.createElement('textarea');
+        dummyInput.value = text;
+        dummyInput.setAttribute('readonly', '');
+        dummyInput.style.position = 'absolute';
+        dummyInput.style.left = '-9999px';
+        document.body.appendChild(dummyInput);
+        dummyInput.select();
+        document.execCommand('copy');
+        document.body.removeChild(dummyInput);
+        return true;
+      } catch (e) {
+        console.warn('Error al copiar al portapapeles:', e);
+        return false;
+      }
+    }
+
+    function copyInstructorLink() {
+      try {
+        const isBlob = window.location.protocol === 'blob:' || window.location.href.startsWith('blob:');
+        if (isBlob) {
+          copyTextToClipboard(`PIN SALA UCI: ${AppState.roomCode}`);
+          showToast(`📋 PIN ${AppState.roomCode} copiado. En el mando ingresa este PIN.`);
+          return;
+        }
+
+        const url = new URL(window.location.href);
+        url.searchParams.set('mode', 'remote');
+        url.searchParams.set('room', AppState.roomCode);
+
+        copyTextToClipboard(url.toString());
+        showToast(`🔗 Enlace copiado: PIN ${AppState.roomCode}. Ábrelo en tu móvil/tablet`);
+      } catch (err) {
+        copyTextToClipboard(AppState.roomCode);
+        showToast(`📋 PIN ${AppState.roomCode} copiado`);
+      }
+    }
+
+    function openRemoteInNewWindow() {
+      try {
+        const isBlob = window.location.protocol === 'blob:' || window.location.href.startsWith('blob:');
+        if (isBlob) {
+          setAppMode('remote');
+          showToast('📱 Conmutado a Mando Docente');
+          return;
+        }
+        const url = new URL(window.location.href);
+        url.searchParams.set('mode', 'remote');
+        url.searchParams.set('room', AppState.roomCode);
+        window.open(url.toString(), '_blank', 'width=1100,height=750');
+      } catch (err) {
+        setAppMode('remote');
+      }
+    }
+
+    // Permite al profesor cambiar o vincular el PIN de la sala desde el mando
+    function changeRoomPinFromRemote() {
+      const pinInput = document.getElementById('input-remote-room-pin');
+      if (!pinInput) return;
+      const newPin = pinInput.value.trim();
+      if (!/^[0-9]{4}$/.test(newPin)) {
+        showToast('⚠️ El PIN debe constar de 4 dígitos numéricos');
+        return;
+      }
+
+      AppState.roomCode = newPin;
+      document.getElementById('display-room-code').innerText = newPin;
+
+      try {
+        if (localBroadcastChannel) localBroadcastChannel.close();
+        localBroadcastChannel = new BroadcastChannel('icu_room_' + AppState.roomCode);
+        localBroadcastChannel.onmessage = (event) => {
+          handleIncomingNetworkMessage(event.data);
+        };
+      } catch (e) {}
+
+      if (peer) {
+        try { peer.destroy(); } catch (e) {}
+      }
+      initPeerJS();
+      showToast(`🔄 Mando vinculado al monitor con PIN ${newPin}`);
+    }
+
+    // --- WEB AUDIO API: TONOS MÉDICOS Y ALARMAS IEC ---
+    let audioCtx = null;
+    let lastAlarmBeepTime = 0;
+    let continuousAudioNodes = null;
+    let currentContinuousType = null; // null | 'asystole' | 'vfib'
+
+    function initAudio() {
+      if (!audioCtx) {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        if (AudioContextClass) audioCtx = new AudioContextClass();
+      }
+      if (audioCtx && audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
+    }
+
+    // Desbloqueo automático al interactuar con el monitor
+    window.addEventListener('click', () => {
+      if (audioCtx && audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
+    }, { once: true });
+
+    function toggleAudio() {
+      initAudio();
+      AppState.audioEnabled = !AppState.audioEnabled;
+      const btn = document.getElementById('btn-global-audio');
+      const icon = document.getElementById('audio-icon');
+      const text = document.getElementById('audio-text');
+
+      if (AppState.audioEnabled) {
+        icon.innerText = '🔊';
+        text.innerText = 'Audio: ON';
+        btn.className = 'bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-500 text-emerald-300 px-2.5 py-1 rounded text-xs flex items-center gap-1 transition';
+        showToast('🔊 Sonidos de cabecera y alarmas continuas de parada cardíaca activados');
+        updateCrisisAudio();
+      } else {
+        stopContinuousCrisisSound();
+        icon.innerText = '🔇';
+        text.innerText = 'Audio: OFF';
+        btn.className = 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 px-2.5 py-1 rounded text-xs flex items-center gap-1 transition';
+      }
+    }
+
+    // --- ALARMAS CONTINUAS Y ESTRESANTES PARA ASISTOLIA Y FIB. VENTRICULAR ---
+
+    // 1. Asistolia: Tono continuo penetrante de línea plana ("BEEEEEEEEEEEP...")
+    function startAsystoleSound() {
+      if (!audioCtx) return;
+      try {
+        const now = audioCtx.currentTime;
+
+        // Frecuencia fundamental penetrante (880 Hz - La5)
+        const osc1 = audioCtx.createOscillator();
+        osc1.type = 'sawtooth';
+        osc1.frequency.setValueAtTime(880, now);
+
+        // Armónico superior cortante (1046.5 Hz - Do6) que crea disonancia acústica médica
+        const osc2 = audioCtx.createOscillator();
+        osc2.type = 'square';
+        osc2.frequency.setValueAtTime(1046.5, now);
+
+        // Filtro pasa-bajos para modelar el altavoz piezoeléctrico de monitor UCI
+        const filter = audioCtx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(3200, now);
+
+        const gain1 = audioCtx.createGain();
+        gain1.gain.setValueAtTime(0.001, now);
+        gain1.gain.linearRampToValueAtTime(0.36, now + 0.04);
+
+        const gain2 = audioCtx.createGain();
+        gain2.gain.setValueAtTime(0.001, now);
+        gain2.gain.linearRampToValueAtTime(0.20, now + 0.04);
+
+        const masterGain = audioCtx.createGain();
+        masterGain.gain.setValueAtTime(1.0, now);
+
+        osc1.connect(gain1);
+        osc2.connect(gain2);
+        gain1.connect(filter);
+        gain2.connect(filter);
+        filter.connect(masterGain);
+        masterGain.connect(audioCtx.destination);
+
+        osc1.start(now);
+        osc2.start(now);
+
+        continuousAudioNodes = {
+          oscillators: [osc1, osc2],
+          masterGain: masterGain
+        };
+      } catch (e) {
+        console.warn('Error al iniciar alarma continua de asistolia:', e);
+      }
+    }
+
+    // 2. Fibrilación Ventricular: Sirena bitonal ultrarrápida, penetrante y estresante (WEE-WOO-WEE-WOO continuo a 5.5 Hz)
+    function startVfibSound() {
+      if (!audioCtx) return;
+      try {
+        const now = audioCtx.currentTime;
+
+        // Oscilador principal en dientes de sierra (centro 1150 Hz)
+        const osc = audioCtx.createOscillator();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(1150, now);
+
+        // LFO para alternancia rápida y estresante (5.5 Hz = ~90ms por semitono)
+        const lfo = audioCtx.createOscillator();
+        lfo.type = 'square';
+        lfo.frequency.setValueAtTime(5.5, now);
+
+        const lfoGain = audioCtx.createGain();
+        lfoGain.gain.setValueAtTime(240, now); // Oscila entre 910 Hz y 1390 Hz
+        lfo.connect(osc.frequency);
+
+        // Subarmónico cuadrado a 575 Hz para cuerpo acústico pesado y sensación de urgencia
+        const oscSub = audioCtx.createOscillator();
+        oscSub.type = 'square';
+        oscSub.frequency.setValueAtTime(575, now);
+
+        const lfoSubGain = audioCtx.createGain();
+        lfoSubGain.gain.setValueAtTime(120, now);
+        lfo.connect(oscSub.frequency);
+
+        const filter = audioCtx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(3600, now);
+
+        const gainNode = audioCtx.createGain();
+        gainNode.gain.setValueAtTime(0.001, now);
+        gainNode.gain.linearRampToValueAtTime(0.40, now + 0.04);
+
+        const subGainNode = audioCtx.createGain();
+        subGainNode.gain.setValueAtTime(0.001, now);
+        subGainNode.gain.linearRampToValueAtTime(0.20, now + 0.04);
+
+        const masterGain = audioCtx.createGain();
+        masterGain.gain.setValueAtTime(1.0, now);
+
+        osc.connect(gainNode);
+        oscSub.connect(subGainNode);
+        gainNode.connect(filter);
+        subGainNode.connect(filter);
+        filter.connect(masterGain);
+        masterGain.connect(audioCtx.destination);
+
+        osc.start(now);
+        oscSub.start(now);
+        lfo.start(now);
+
+        continuousAudioNodes = {
+          oscillators: [osc, oscSub, lfo],
+          masterGain: masterGain
+        };
+      } catch (e) {
+        console.warn('Error al iniciar sirena continua de FV:', e);
+      }
+    }
+
+    function stopContinuousCrisisSound() {
+      if (continuousAudioNodes) {
+        try {
+          const nodes = continuousAudioNodes;
+          continuousAudioNodes = null;
+          currentContinuousType = null;
+          if (nodes.masterGain && audioCtx) {
+            nodes.masterGain.gain.setValueAtTime(nodes.masterGain.gain.value, audioCtx.currentTime);
+            nodes.masterGain.gain.linearRampToValueAtTime(0.001, audioCtx.currentTime + 0.04);
+          }
+          setTimeout(() => {
+            if (nodes.oscillators) {
+              nodes.oscillators.forEach(o => {
+                try { o.stop(); o.disconnect(); } catch (e) {}
+              });
+            }
+          }, 50);
+        } catch (e) {
+          continuousAudioNodes = null;
+          currentContinuousType = null;
+        }
+      } else {
+        currentContinuousType = null;
+      }
+    }
+
+    // Gestor activo que vigila el estado del monitor en cada fotograma
+    function updateCrisisAudio() {
+      if (!AppState.audioEnabled || !audioCtx) {
+        if (currentContinuousType !== null) stopContinuousCrisisSound();
+        return;
+      }
+
+      const isSilenced = Date.now() < AppState.audioSilencedUntil;
+      if (isSilenced) {
+        if (currentContinuousType !== null) stopContinuousCrisisSound();
+        return;
+      }
+
+      let desiredType = null;
+      if (AppState.rhythmId === 'asystole') {
+        desiredType = 'asystole';
+      } else if (AppState.rhythmId === 'vfib') {
+        desiredType = 'vfib';
+      }
+
+      if (desiredType !== currentContinuousType) {
+        stopContinuousCrisisSound();
+        if (desiredType === 'asystole') {
+          startAsystoleSound();
+          currentContinuousType = 'asystole';
+        } else if (desiredType === 'vfib') {
+          startVfibSound();
+          currentContinuousType = 'vfib';
+        }
+      }
+    }
+
+    // Comprueba y repite las alarmas periódicas de TV, AESP y nivel rojo
+    function checkPeriodicAlarms() {
+      if (!AppState.audioEnabled || !audioCtx) return;
+      if (Date.now() < AppState.audioSilencedUntil) return;
+      // Si ya hay alarma continua activa (FV o Asistolia), no se solapan pulsos
+      if (currentContinuousType !== null) return;
+
+      if (AppState.alarmLevel === 'crisis') {
+        triggerMedicalAlarmAudio('red', true);
+      } else if (AppState.alarmLevel === 'red') {
+        triggerMedicalAlarmAudio('red', false);
+      }
+    }
+
+    // Beep sistólico del pulsioxímetro dependiente de SpO2
+    function playSystolicBeep(spo2Val) {
+      if (!AppState.audioEnabled || !audioCtx) return;
+      if (Date.now() < AppState.audioSilencedUntil) return;
+      if (AppState.incidents.spo2_off) return;
+
+      try {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+
+        const clamp = Math.max(50, Math.min(100, spo2Val));
+        const freq = 360 + ((clamp - 50) / 50) * 520; // 360 Hz a 880 Hz
+
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+
+        gain.gain.setValueAtTime(0, audioCtx.currentTime);
+        gain.gain.linearRampToValueAtTime(0.09, audioCtx.currentTime + 0.015);
+        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.08);
+
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.09);
+      } catch (e) {}
+    }
+
+    // Alarma Médica IEC y Alarma de Crisis de Máxima Intensidad
+    function triggerMedicalAlarmAudio(level, isCrisis = false) {
+      if (!AppState.audioEnabled || !audioCtx) return;
+      if (Date.now() < AppState.audioSilencedUntil) return;
+
+      const now = Date.now();
+      // En crisis extrema (TV/FV/Asistolia/AESP) la alarma suena mucho más rápido y frecuente
+      const interval = isCrisis ? 1400 : (level === 'red' ? 3200 : 7000);
+      if (now - lastAlarmBeepTime < interval) return;
+      lastAlarmBeepTime = now;
+
+      try {
+        if (isCrisis) {
+          // --- ALARMA DE CRISIS / CÓDIGO AZUL (EXTREMA INTENSIDAD Y TIMBRE PENETRANTE) ---
+          // Ráfaga doble penetrante de 6 pulsos armónicos en diente de sierra/cuadrada (estilo Philips/Mindray Crisis)
+          const crisisNotes = [987.77, 1318.51, 987.77, 1318.51, 1567.98, 1975.53]; // Si5, Mi6, Si5, Mi6, Sol6, Si6
+          crisisNotes.forEach((freq, idx) => {
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            const start = audioCtx.currentTime + idx * 0.095;
+
+            // Uso de onda 'sawtooth' para crear armónicos cortantes y audibles en todo el aula
+            osc.type = (idx % 2 === 0) ? 'sawtooth' : 'square';
+            osc.frequency.setValueAtTime(freq, start);
+
+            // Volumen incrementado significativamente a 0.42 (frente al 0.12 normal)
+            gain.gain.setValueAtTime(0, start);
+            gain.gain.linearRampToValueAtTime(0.42, start + 0.012);
+            gain.gain.exponentialRampToValueAtTime(0.01, start + 0.085);
+
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+
+            osc.start(start);
+            osc.stop(start + 0.09);
+          });
+        } else if (level === 'red') {
+          // Alarma de alta prioridad estándar IEC
+          const notes = [523.25, 659.25, 783.99, 1046.50, 1318.51];
+          notes.forEach((freq, idx) => {
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            const start = audioCtx.currentTime + idx * 0.13;
+
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(freq, start);
+
+            gain.gain.setValueAtTime(0, start);
+            gain.gain.linearRampToValueAtTime(0.14, start + 0.02);
+            gain.gain.exponentialRampToValueAtTime(0.001, start + 0.12);
+
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+
+            osc.start(start);
+            osc.stop(start + 0.13);
+          });
+        }
+      } catch (e) {}
+    }
+
+    // --- CANVAS Y BARRIDO EN TIEMPO REAL (60 FPS) ---
+    const canvas = document.getElementById('monitor-canvas');
+    const ctx = canvas.getContext('2d', { alpha: false });
+
+    let canvasWidth = 0;
+    let canvasHeight = 0;
+    let sweepX = 0;
+    const sweepSpeed = 2.4;
+    const sweepClearGap = 36;
+
+    function resizeCanvas() {
+      const rect = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      canvasWidth = Math.floor(rect.width * dpr);
+      canvasHeight = Math.floor(rect.height * dpr);
+
+      canvas.width = canvasWidth;
+      canvas.height = canvasHeight;
+
+      ctx.fillStyle = '#05080f';
+      ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+      sweepX = 0;
+    }
+    window.addEventListener('resize', resizeCanvas);
+
+    // --- MODELO MATEMÁTICO DE ONDAS ---
+    function getECGSample(phase, rhythmId) {
+      // Si el electrodo está desconectado
+      if (AppState.incidents.lead_off) {
+        return (Math.sin(AppState.t * 30) * 0.02);
+      }
+
+      switch (rhythmId) {
+        case 'asystole':
+          return (Math.sin(AppState.t * 4) * 0.02);
+        case 'vfib':
+          return (
+            Math.sin(AppState.t * 22) * 0.45 +
+            Math.sin(AppState.t * 31 + 1.2) * 0.35 +
+            Math.cos(AppState.t * 14 - 0.5) * 0.25 +
+            (Math.random() - 0.5) * 0.15
+          );
+        case 'vtach':
+          const vtCycle = (AppState.t * (AppState.hr / 60)) % 1;
+          return vtCycle < 0.5 ? Math.sin(vtCycle * Math.PI * 2) * 1.35 : -Math.sin((vtCycle - 0.5) * Math.PI * 2) * 0.4;
+        case 'pea':
+          // AESP: Muestra un complejo organizado pero lento y ancho (sin gasto cardiaco)
+          let peaVal = 0;
+          if (phase >= 0.12 && phase < 0.24) peaVal += Math.sin((phase - 0.12) / 0.12 * Math.PI) * 0.12;
+          if (phase >= 0.34 && phase < 0.52) { // QRS ancho
+            peaVal += Math.sin((phase - 0.34) / 0.18 * Math.PI * 2) * 0.85;
+          }
+          if (phase >= 0.60 && phase < 0.80) peaVal -= Math.sin((phase - 0.60) / 0.20 * Math.PI) * 0.25; // T invertida
+          return peaVal;
+        case 'aflutter':
+          const saw = ((AppState.t * 5) % 1) * 0.38 - 0.19;
+          let qrsAflutter = 0;
+          if (phase > 0.35 && phase < 0.45) {
+            const p = (phase - 0.35) / 0.10;
+            qrsAflutter = p < 0.2 ? -p * 1.5 : (p < 0.5 ? (p - 0.2) * 4.5 - 0.3 : 1.05 - (p - 0.5) * 2.5);
+          }
+          return saw + qrsAflutter;
+        case 'afib':
+          const fWaves = (Math.sin(AppState.t * 40) * 0.05) + (Math.sin(AppState.t * 62) * 0.04);
+          let qrsAfib = 0;
+          if (phase > 0.35 && phase < 0.47) {
+            const p = (phase - 0.35) / 0.12;
+            qrsAfib = p < 0.2 ? -0.15 * (p / 0.2) : (p < 0.5 ? -0.15 + (1.35 * ((p - 0.2) / 0.3)) : (p < 0.75 ? 1.2 - (1.45 * ((p - 0.5) / 0.25)) : -0.25 + (0.25 * ((p - 0.75) / 0.25))));
+          }
+          return fWaves + qrsAfib;
+        case 'avblock':
+          const pPhase = (AppState.t * (75 / 60)) % 1;
+          let pWave = (pPhase > 0.1 && pPhase < 0.22) ? Math.sin((pPhase - 0.1) / 0.12 * Math.PI) * 0.22 : 0;
+          let qrsEscape = (phase > 0.35 && phase < 0.55) ? Math.sin((phase - 0.35) / 0.20 * Math.PI * 2) * 1.1 : 0;
+          return pWave + qrsEscape;
+        case 'bigeminy':
+          if (AppState.isBigeminyPVC && phase > 0.25 && phase < 0.55) {
+            return -Math.sin((phase - 0.25) / 0.30 * Math.PI * 2) * 1.25;
+          }
+          // latido sinusal normal alternante...
+        default:
+          let ecg = 0;
+          if (phase >= 0.12 && phase < 0.24) ecg += Math.sin((phase - 0.12) / 0.12 * Math.PI) * 0.18; // P
+          if (phase >= 0.34 && phase < 0.44) { // QRS
+            const qp = (phase - 0.34) / 0.10;
+            if (qp < 0.18) ecg -= (qp / 0.18) * 0.18;
+            else if (qp < 0.50) ecg = -0.18 + ((qp - 0.18) / 0.32) * 1.45;
+            else if (qp < 0.80) ecg = 1.27 - ((qp - 0.50) / 0.30) * 1.62;
+            else ecg = -0.35 + ((qp - 0.80) / 0.20) * 0.35;
+          }
+          if (phase >= 0.54 && phase < 0.74) ecg += Math.sin((phase - 0.54) / 0.20 * Math.PI) * 0.32; // T
+          return ecg;
+      }
+    }
+
+    function getPAISample(phase, rhythmId) {
+      if (rhythmId === 'asystole' || rhythmId === 'vfib' || rhythmId === 'pea') {
+        return AppState.pad + (Math.sin(AppState.t * 0.5) * 1.2);
+      }
+
+      let pas = AppState.pas;
+      let pad = AppState.pad;
+
+      // Si la línea está amortiguada técnicamente por enfermería
+      if (AppState.incidents.art_damped) {
+        pas = pas * 0.75;
+        pad = pad * 1.15;
+        let artPhaseDamped = (phase - 0.18 + 1) % 1;
+        return pad + (pas - pad) * (0.5 + 0.5 * Math.sin(artPhaseDamped * Math.PI * 2 - Math.PI / 2));
+      }
+
+      let artPhase = (phase - 0.16 + 1) % 1;
+      if (artPhase < 0.20) {
+        return pad + (pas - pad) * Math.sin((artPhase / 0.20) * Math.PI * 0.5);
+      } else if (artPhase < 0.40) {
+        const dip = pad + (pas - pad) * 0.65;
+        return pas - (pas - dip) * Math.sin(((artPhase - 0.20) / 0.20) * Math.PI * 0.5);
+      } else if (artPhase < 0.52) {
+        const dip = pad + (pas - pad) * 0.65;
+        const peak = pad + (pas - pad) * 0.74;
+        return dip + (peak - dip) * Math.sin(((artPhase - 0.40) / 0.12) * Math.PI);
+      } else {
+        const decay = (artPhase - 0.52) / 0.48;
+        const fromVal = pad + (pas - pad) * 0.65;
+        return pad + (fromVal - pad) * Math.exp(-decay * 3.0);
+      }
+    }
+
+    function getPlethSample(phase, rhythmId) {
+      if (rhythmId === 'asystole' || rhythmId === 'vfib' || rhythmId === 'pea' || AppState.spo2 === 0 || AppState.incidents.spo2_off) {
+        return 0;
+      }
+      let plethPhase = (phase - 0.22 + 1) % 1;
+      if (plethPhase < 0.26) return Math.sin((plethPhase / 0.26) * Math.PI * 0.5);
+      if (plethPhase < 0.50) return 1.0 - ((plethPhase - 0.26) / 0.24) * 0.35 + Math.sin(((plethPhase - 0.26) / 0.24) * Math.PI) * 0.12;
+      return 0.65 * Math.exp(-((plethPhase - 0.50) / 0.50) * 3.5);
+    }
+
+    function getRespSample() {
+      if (AppState.rr === 0) return 0;
+      const cycle = AppState.respPhase % 1;
+      return cycle < 0.38 
+        ? Math.sin((cycle / 0.38) * Math.PI * 0.5) 
+        : Math.cos(((cycle - 0.38) / 0.62) * Math.PI * 0.5);
+    }
+
+    // --- BUCLE DE RENDERIZADO DEL MONITOR ---
+    let lastTime = 0;
+    let prevPoints = { ecg: null, art: null, pleth: null, resp: null };
+
+    function monitorRenderLoop(timestamp) {
+      if (!lastTime) lastTime = timestamp;
+      const dt = Math.min((timestamp - lastTime) / 1000, 0.1);
+      lastTime = timestamp;
+
+      // Supervisión continua del audio de crisis y alarmas periódicas
+      if (AppState.mode === 'monitor') {
+        updateCrisisAudio();
+        checkPeriodicAlarms();
+      }
+
+      if (!AppState.isFrozen && AppState.mode === 'monitor') {
+        AppState.t += dt;
+
+        // Ritmo y cálculo de latidos
+        const beatPeriod = AppState.rhythmId === 'afib' 
+          ? AppState.afibInterval 
+          : (AppState.hr > 0 ? (60 / AppState.hr) : 999);
+
+        if (AppState.hr > 0 && AppState.rhythmId !== 'asystole' && AppState.rhythmId !== 'vfib') {
+          AppState.cardiacPhase += dt / beatPeriod;
+          if (AppState.cardiacPhase >= 1.0) {
+            AppState.cardiacPhase = AppState.cardiacPhase % 1.0;
+
+            if (AppState.rhythmId === 'bigeminy') {
+              AppState.isBigeminyPVC = !AppState.isBigeminyPVC;
+            }
+            if (AppState.rhythmId === 'afib') {
+              AppState.afibInterval = (60 / AppState.hr) * (0.65 + Math.random() * 0.7);
+            }
+
+            // Destello visual de latido y sonido de pulsioxímetro
+            triggerBeatUI();
+          }
+        }
+
+        if (AppState.rr > 0) {
+          AppState.respPhase = (AppState.respPhase + dt / (60 / AppState.rr)) % 1.0;
+        }
+
+        drawWaveformsSweep();
+      }
+
+      requestAnimationFrame(monitorRenderLoop);
+    }
+
+    function triggerBeatUI() {
+      const heartIcon = document.getElementById('heart-pulse-icon');
+      if (heartIcon) {
+        heartIcon.classList.remove('beating');
+        void heartIcon.offsetWidth;
+        heartIcon.classList.add('beating');
+      }
+      playSystolicBeep(AppState.spo2);
+    }
+
+    function drawWaveformsSweep() {
+      if (canvasWidth === 0 || canvasHeight === 0) return;
+
+      const nextX = sweepX + sweepSpeed;
+
+      // Borrar la barra delantera
+      ctx.fillStyle = '#05080f';
+      ctx.fillRect(sweepX, 0, sweepClearGap, canvasHeight);
+
+      // Líneas divisorias de canales
+      const rowH = canvasHeight / 4;
+      ctx.strokeStyle = 'rgba(30, 41, 59, 0.35)';
+      ctx.lineWidth = 1;
+      for (let i = 1; i < 4; i++) {
+        ctx.beginPath();
+        ctx.moveTo(sweepX, i * rowH);
+        ctx.lineTo(sweepX + sweepClearGap, i * rowH);
+        ctx.stroke();
+      }
+
+      // Canales fisiológicos
+      const ecgVal = getECGSample(AppState.cardiacPhase, AppState.rhythmId);
+      const ecgY = (rowH * 0.52) - (ecgVal * (rowH * 0.40));
+
+      const paiVal = getPAISample(AppState.cardiacPhase, AppState.rhythmId);
+      const paiNorm = Math.max(0, Math.min(240, paiVal)) / 220;
+      const paiY = (rowH + rowH * 0.90) - (paiNorm * (rowH * 0.80));
+
+      const plethVal = getPlethSample(AppState.cardiacPhase, AppState.rhythmId);
+      const plethY = (rowH * 2 + rowH * 0.88) - (plethVal * (rowH * 0.72));
+
+      const respVal = getRespSample();
+      const respY = (rowH * 3 + rowH * 0.85) - (respVal * (rowH * 0.65));
+
+      // Trazados con glow
+      if (prevPoints.ecg !== null && sweepX > 0) {
+        // 1. ECG (Verde)
+        ctx.beginPath();
+        ctx.strokeStyle = AppState.incidents.lead_off ? '#475569' : '#10b981';
+        ctx.lineWidth = 2.2;
+        ctx.moveTo(prevPoints.ecg.x, prevPoints.ecg.y);
+        ctx.lineTo(sweepX, ecgY);
+        ctx.stroke();
+
+        // 2. PAI (Rojo)
+        ctx.beginPath();
+        ctx.strokeStyle = '#ef4444';
+        ctx.lineWidth = 2.2;
+        ctx.moveTo(prevPoints.art.x, prevPoints.art.y);
+        ctx.lineTo(sweepX, paiY);
+        ctx.stroke();
+
+        // 3. SpO2 (Cian)
+        ctx.beginPath();
+        ctx.strokeStyle = AppState.incidents.spo2_off ? '#334155' : '#06b6d4';
+        ctx.lineWidth = 2.0;
+        ctx.moveTo(prevPoints.pleth.x, prevPoints.pleth.y);
+        ctx.lineTo(sweepX, plethY);
+        ctx.stroke();
+
+        // 4. RESP (Amarillo)
+        ctx.beginPath();
+        ctx.strokeStyle = '#eab308';
+        ctx.lineWidth = 1.9;
+        ctx.moveTo(prevPoints.resp.x, prevPoints.resp.y);
+        ctx.lineTo(sweepX, respY);
+        ctx.stroke();
+      }
+
+      prevPoints.ecg = { x: sweepX, y: ecgY };
+      prevPoints.art = { x: sweepX, y: paiY };
+      prevPoints.pleth = { x: sweepX, y: plethY };
+      prevPoints.resp = { x: sweepX, y: respY };
+
+      // Barra vertical indicadora de barrido
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
+      ctx.fillRect(sweepX + 1, 0, 1.5, canvasHeight);
+
+      sweepX = nextX;
+      if (sweepX >= canvasWidth) {
+        sweepX = 0;
+        prevPoints.ecg = null;
+        prevPoints.art = null;
+        prevPoints.pleth = null;
+        prevPoints.resp = null;
+      }
+    }
+
+    // --- EVALUACIÓN DE ALARMAS Y NÚMEROS EN MONITOR ---
+    function updateNumericDisplays() {
+      // Cálculo de PAM: [PAS + 2*PAD] / 3
+      AppState.pam = (AppState.pas + 2 * AppState.pad) / 3;
+      const pp = Math.max(0, AppState.pas - AppState.pad);
+
+      // FC
+      const hrEl = document.getElementById('num-display-hr');
+      hrEl.innerText = AppState.incidents.lead_off ? '---' : (AppState.hr === 0 ? '---' : Math.round(AppState.hr));
+
+      // PA
+      document.getElementById('num-display-bp').innerText = `${Math.round(AppState.pas)}/${Math.round(AppState.pad)}`;
+      document.getElementById('num-display-pam').innerText = `(${Math.round(AppState.pam)})`;
+      document.getElementById('num-display-pp').innerText = Math.round(pp);
+
+      // SpO2
+      const spo2El = document.getElementById('num-display-spo2');
+      spo2El.innerText = AppState.incidents.spo2_off ? '--' : (AppState.spo2 === 0 ? '--' : AppState.spo2);
+      document.getElementById('num-display-pi').innerText = (AppState.spo2 > 0 && !AppState.incidents.spo2_off) ? AppState.pi.toFixed(1) : '0.0';
+
+      // FR
+      document.getElementById('num-display-rr').innerText = AppState.rr === 0 ? '--' : AppState.rr;
+
+      // Nombre de Ritmo
+      const rhythmCfg = RHYTHMS_DATA[AppState.rhythmId];
+      if (rhythmCfg) {
+        document.getElementById('num-display-rhythm-name').innerText = rhythmCfg.tag;
+      }
+
+      // Evaluar Alarma Clínica
+      evaluateAlarmsAndBanners();
+    }
+
+    function evaluateAlarmsAndBanners() {
+      let level = 'normal';
+      let isCrisis = false;
+      let msg = 'MONITOR ACTIVO - PARÁMETROS HEMODINÁMICOS DENTRO DE RANGO';
+      const cfg = RHYTHMS_DATA[AppState.rhythmId];
+
+      if (AppState.incidents.lead_off) {
+        level = 'yellow';
+        msg = 'AVISO TÉCNICO: DESCONEXIÓN DE ELECTRODOS ECG (LEAD OFF)';
+      } else if (AppState.incidents.spo2_off) {
+        level = 'yellow';
+        msg = 'AVISO TÉCNICO: REVISAR SENSOR DE PULSIOXIMETRÍA SpO2';
+      } else if (cfg && cfg.isCrisis) {
+        level = 'crisis';
+        isCrisis = true;
+        msg = cfg.msg;
+      } else if (cfg && cfg.isLethal) {
+        level = 'red';
+        msg = cfg.msg;
+      } else if (AppState.pam < 65) {
+        level = 'red';
+        msg = `¡ALERTA!: HIPOPERFUSIÓN TISULAR SEVERA (PAM ${Math.round(AppState.pam)} < 65 mmHg)`;
+      } else if (AppState.spo2 < 90) {
+        level = 'red';
+        msg = `¡ALERTA!: HIPOXEMIA ARTERIAL CRÍTICA (SpO2 ${AppState.spo2}% < 90%)`;
+      } else if (AppState.hr < 50 || AppState.hr > 120) {
+        level = 'yellow';
+        msg = `AVISO: FRECUENCIA CARDÍACA FUERA DE LÍMITES (${Math.round(AppState.hr)} lpm)`;
+      } else if (cfg) {
+        msg = cfg.msg;
+      }
+
+      AppState.alarmLevel = level;
+      AppState.alarmMsg = msg;
+
+      // Actualizar Banner
+      const banner = document.getElementById('alarm-banner');
+      const badge = document.getElementById('alarm-severity-badge');
+      const msgEl = document.getElementById('alarm-banner-message');
+      const symbol = document.getElementById('alarm-indicator-symbol');
+      const frame = document.getElementById('monitor-frame');
+
+      msgEl.innerText = msg;
+      banner.classList.remove('bg-red-950/90', 'border-red-600', 'alarm-active-red', 'bg-amber-950/80', 'border-yellow-600', 'alarm-active-yellow', 'alarm-active-crisis', 'bg-red-700');
+      frame.classList.remove('border-red-600', 'border-yellow-600', 'alarm-active-red', 'alarm-active-yellow', 'alarm-active-crisis');
+
+      if (level === 'crisis') {
+        banner.classList.add('bg-red-700', 'border-red-400', 'alarm-active-crisis');
+        frame.classList.add('border-red-500', 'alarm-active-crisis');
+        badge.innerText = '¡CÓDIGO AZUL / CRISIS!';
+        badge.className = 'text-[11px] uppercase font-black px-2.5 py-0.5 rounded bg-white text-red-700 animate-bounce tracking-widest shadow-lg';
+        symbol.innerText = '⚡';
+        symbol.className = 'text-white text-base font-bold animate-ping';
+        triggerMedicalAlarmAudio('red', true);
+      } else if (level === 'red') {
+        banner.classList.add('bg-red-950/90', 'border-red-600', 'alarm-active-red');
+        frame.classList.add('border-red-600', 'alarm-active-red');
+        badge.innerText = 'ALTA PRIORIDAD';
+        badge.className = 'text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-red-600 text-white animate-pulse';
+        symbol.innerText = '▲';
+        symbol.className = 'text-red-400 font-bold';
+        triggerMedicalAlarmAudio('red', false);
+      } else if (level === 'yellow') {
+        banner.classList.add('bg-amber-950/80', 'border-yellow-600', 'alarm-active-yellow');
+        frame.classList.add('border-yellow-600', 'alarm-active-yellow');
+        badge.innerText = 'MEDIA PRIORIDAD';
+        badge.className = 'text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-yellow-500 text-black font-semibold';
+        symbol.innerText = '■';
+        symbol.className = 'text-yellow-400 font-bold';
+      } else {
+        banner.className = 'py-1 px-4 rounded flex items-center justify-between bg-slate-900/90 border border-slate-700 text-slate-300 transition-all duration-300';
+        frame.classList.add('border-slate-800');
+        badge.innerText = 'NORMAL';
+        badge.className = 'text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-slate-800 text-slate-300';
+        symbol.innerText = '●';
+        symbol.className = 'text-emerald-400 text-sm';
+      }
+    }
+
+    // --- ACCIONES DOCENTES DEL MANDO A DISTANCIA ---
+    function setRhythm(rhythmId, shouldBroadcast = true) {
+      const cfg = RHYTHMS_DATA[rhythmId];
+      if (!cfg) return;
+
+      AppState.rhythmId = rhythmId;
+      AppState.hr = cfg.hr;
+      AppState.pas = cfg.pas;
+      AppState.pad = cfg.pad;
+      AppState.spo2 = cfg.spo2;
+      AppState.rr = cfg.rr;
+
+      syncRemoteControlsUI();
+      updateNumericDisplays();
+
+      if (shouldBroadcast) {
+        sendNetworkMessage('CHANGE_RHYTHM', { rhythmId });
+        addDebriefEntry(`Arritmia cambiada a: ${cfg.name}`);
+        showToast(`⚡ Ritmo cambiado a: ${cfg.name}`);
+      }
+    }
+
+    function onRemoteParamChange(key, value) {
+      const numVal = parseInt(value, 10);
+      AppState[key] = numVal;
+
+      // Regla fisiológica: PAS > PAD
+      if (key === 'pas' && AppState.pas <= AppState.pad) {
+        AppState.pad = Math.max(20, AppState.pas - 10);
+      }
+      if (key === 'pad' && AppState.pad >= AppState.pas) {
+        AppState.pas = Math.min(240, AppState.pad + 10);
+      }
+
+      syncRemoteControlsUI();
+      updateNumericDisplays();
+
+      sendNetworkMessage('CHANGE_PARAM', { key, value: numVal });
+    }
+
+    function applyParamChange(key, value) {
+      AppState[key] = value;
+      syncRemoteControlsUI();
+      updateNumericDisplays();
+    }
+
+    // Escenarios clínicos de UCI en 1-clic
+    function triggerScenario(scenarioKey, shouldBroadcast = true) {
+      let debriefMsg = '';
+
+      switch (scenarioKey) {
+        case 'arrest_vf':
+          setRhythm('vfib', false);
+          debriefMsg = 'CRISIS: Parada Cardiorrespiratoria por Fibrilación Ventricular súbita inducida.';
+          break;
+        case 'arrest_pea':
+          setRhythm('pea', false);
+          debriefMsg = 'CRISIS: Parada Cardiorrespiratoria por Actividad Eléctrica Sin Pulso (AESP) inducida.';
+          break;
+        case 'septic_shock':
+          AppState.rhythmId = 'tachycardia';
+          AppState.hr = 138;
+          AppState.pas = 74;
+          AppState.pad = 36;
+          AppState.spo2 = 91;
+          AppState.rr = 32;
+          debriefMsg = 'CRISIS: Shock Séptico vasopléjico inducido (PAM 48 mmHg, taquipnea).';
+          break;
+        case 'hypovolemia':
+          AppState.rhythmId = 'tachycardia';
+          AppState.hr = 132;
+          AppState.pas = 82;
+          AppState.pad = 56;
+          AppState.spo2 = 94;
+          AppState.rr = 26;
+          debriefMsg = 'CRISIS: Shock Hipovolémico por sangrado masivo inducido.';
+          break;
+        case 'acute_hypoxia':
+          AppState.rhythmId = 'sinus';
+          AppState.hr = 124;
+          AppState.pas = 148;
+          AppState.pad = 92;
+          AppState.spo2 = 72;
+          AppState.rr = 36;
+          debriefMsg = 'CRISIS: Insuficiencia Respiratoria Aguda con hipoxemia severa (SpO2 72%).';
+          break;
+        case 'rosc':
+          AppState.rhythmId = 'sinus';
+          AppState.hr = 88;
+          AppState.pas = 115;
+          AppState.pad = 70;
+          AppState.spo2 = 96;
+          AppState.rr = 16;
+          debriefMsg = 'ÉXITO: Retorno de Circulación Espontánea (ROSC) post-reanimación.';
+          break;
+      }
+
+      syncRemoteControlsUI();
+      updateNumericDisplays();
+
+      if (shouldBroadcast) {
+        sendNetworkMessage('TRIGGER_SCENARIO', { scenarioKey });
+        addDebriefEntry(debriefMsg);
+        showToast(`🚨 Escenario activado: ${debriefMsg}`);
+      }
+    }
+
+    function applyScenario(scenarioKey) {
+      triggerScenario(scenarioKey, false);
+    }
+
+    // Incidentes Técnicos de Enfermería
+    function toggleTechnicalIncident(incidentKey, shouldBroadcast = true) {
+      AppState.incidents[incidentKey] = !AppState.incidents[incidentKey];
+      applyTechnicalIncident(incidentKey, AppState.incidents[incidentKey], shouldBroadcast);
+    }
+
+    function applyTechnicalIncident(incidentKey, state, shouldBroadcast = true) {
+      AppState.incidents[incidentKey] = state;
+      updateIncidentUI();
+      updateNumericDisplays();
+
+      if (shouldBroadcast) {
+        sendNetworkMessage('TOGGLE_INCIDENT', { incidentKey, state });
+        const name = incidentKey === 'lead_off' ? 'Electrodo ECG suelto' : (incidentKey === 'spo2_off' ? 'Sensor SpO2 caído' : 'Línea arterial amortiguada');
+        addDebriefEntry(`Incidente técnico: ${name} -> ${state ? 'ACTIVADO' : 'RESUELTO'}`);
+        showToast(`🛠 Incidente: ${name} ${state ? 'Activado' : 'Normalizado'}`);
+      }
+    }
+
+    function updateIncidentUI() {
+      // Badges en la vista docente
+      const bLead = document.getElementById('badge-incident-lead-off');
+      const bSpo2 = document.getElementById('badge-incident-spo2-off');
+      const bArt = document.getElementById('badge-incident-art-damped');
+
+      if (bLead) {
+        bLead.innerText = AppState.incidents.lead_off ? 'EN FALLO' : 'NORMAL';
+        bLead.className = AppState.incidents.lead_off ? 'text-[10px] bg-red-950 text-red-300 font-bold px-2 py-0.5 rounded font-mono' : 'text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded font-mono';
+      }
+      if (bSpo2) {
+        bSpo2.innerText = AppState.incidents.spo2_off ? 'EN FALLO' : 'NORMAL';
+        bSpo2.className = AppState.incidents.spo2_off ? 'text-[10px] bg-red-950 text-red-300 font-bold px-2 py-0.5 rounded font-mono' : 'text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded font-mono';
+      }
+      if (bArt) {
+        bArt.innerText = AppState.incidents.art_damped ? 'AMORTIGUADA' : 'NORMAL';
+        bArt.className = AppState.incidents.art_damped ? 'text-[10px] bg-red-950 text-red-300 font-bold px-2 py-0.5 rounded font-mono' : 'text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded font-mono';
+      }
+
+      // Banner en el monitor del alumno
+      const techBanner = document.getElementById('technical-alarm-overlay');
+      const artTag = document.getElementById('art-damping-tag');
+      if (techBanner) {
+        if (AppState.incidents.lead_off) {
+          techBanner.innerText = '⚠️ ALARMA TÉCNICA: ELECTRODOS ECG DESCONECTADOS (LEAD OFF)';
+          techBanner.classList.remove('hidden');
+        } else if (AppState.incidents.spo2_off) {
+          techBanner.innerText = '⚠️ ALARMA TÉCNICA: SENSOR SpO2 DESPRENDIDO / ARTEFACTO';
+          techBanner.classList.remove('hidden');
+        } else {
+          techBanner.classList.add('hidden');
+        }
+      }
+
+      if (artTag) {
+        artTag.innerText = AppState.incidents.art_damped ? 'AMORTIGUADA' : 'RADIAL';
+        artTag.className = AppState.incidents.art_damped ? 'text-[9px] bg-amber-950 text-amber-300 px-1 rounded font-mono font-bold' : 'text-[9px] bg-red-950 text-red-300 px-1 rounded font-mono';
+      }
+    }
+
+    // Silencio y Freeze Remoto
+    function sendRemoteCommand(action) {
+      if (action === 'TOGGLE_FREEZE') {
+        toggleFreezeState(true);
+      } else if (action === 'SILENCE_ALARM') {
+        silenceAlarm(120, true);
+      }
+    }
+
+    function toggleFreezeState(shouldBroadcast = true) {
+      AppState.isFrozen = !AppState.isFrozen;
+      const freezeBadge = document.getElementById('freeze-badge');
+      const remoteLabel = document.getElementById('remote-freeze-label');
+
+      if (AppState.isFrozen) {
+        if (freezeBadge) freezeBadge.classList.remove('hidden');
+        if (remoteLabel) remoteLabel.innerText = 'Reanudar Monitor';
+        showToast('❄ Monitor congelado para discusión clínica');
+      } else {
+        if (freezeBadge) freezeBadge.classList.add('hidden');
+        if (remoteLabel) remoteLabel.innerText = 'Congelar Monitor';
+        showToast('▶ Monitor reanudado en tiempo real');
+      }
+
+      if (shouldBroadcast) {
+        sendNetworkMessage('TOGGLE_FREEZE', { isFrozen: AppState.isFrozen });
+        addDebriefEntry(`Trazado del monitor: ${AppState.isFrozen ? 'CONGELADO' : 'REANUDADO'}`);
+      }
+    }
+
+    function silenceAlarm(seconds, shouldBroadcast = true) {
+      AppState.audioSilencedUntil = Date.now() + seconds * 1000;
+      stopContinuousCrisisSound();
+      showToast(`🔕 Alarmas silenciadas por ${seconds}s`);
+
+      if (shouldBroadcast) {
+        sendNetworkMessage('SILENCE_ALARM', { seconds });
+        addDebriefEntry(`Alarmas sonoras silenciadas por el docente (${seconds}s)`);
+      }
+    }
+
+    // Sincronizar Sliders y Etiquetas de la Consola Docente
+    function syncRemoteControlsUI() {
+      const sHr = document.getElementById('remote-slider-hr');
+      const sPas = document.getElementById('remote-slider-pas');
+      const sPad = document.getElementById('remote-slider-pad');
+      const sSpo2 = document.getElementById('remote-slider-spo2');
+      const sRr = document.getElementById('remote-slider-rr');
+
+      if (sHr) { sHr.value = AppState.hr; document.getElementById('remote-label-hr').innerText = `${AppState.hr} lpm`; }
+      if (sPas) { sPas.value = AppState.pas; document.getElementById('remote-label-pas').innerText = `${AppState.pas} mmHg`; }
+      if (sPad) { sPad.value = AppState.pad; document.getElementById('remote-label-pad').innerText = `${AppState.pad} mmHg`; }
+      if (sSpo2) { sSpo2.value = AppState.spo2; document.getElementById('remote-label-spo2').innerText = `${AppState.spo2} %`; }
+      if (sRr) { sRr.value = AppState.rr; document.getElementById('remote-label-rr').innerText = `${AppState.rr} rpm`; }
+
+      const pamEl = document.getElementById('remote-label-pam');
+      if (pamEl) {
+        pamEl.innerText = `${AppState.pam.toFixed(1)} mmHg`;
+      }
+
+      // Resaltar arritmia activa en la cuadrícula del mando
+      document.querySelectorAll('.rhythm-btn-remote').forEach(btn => {
+        const id = btn.getAttribute('data-rhythm-id');
+        if (id === AppState.rhythmId) {
+          btn.className = 'rhythm-btn-remote p-2.5 rounded-lg text-left transition font-semibold text-xs border-2 border-emerald-400 bg-emerald-950/60 text-white';
+        } else {
+          btn.className = 'rhythm-btn-remote p-2.5 rounded-lg text-left transition font-semibold text-xs border border-slate-800 bg-black/40 text-slate-300 hover:bg-slate-800';
+        }
+      });
+    }
+
+    // Generar cuadrícula de arritmias en la consola del docente
+    function renderRemoteRhythmGrid() {
+      const grid = document.getElementById('remote-rhythm-grid');
+      grid.innerHTML = '';
+
+      Object.values(RHYTHMS_DATA).forEach(r => {
+        const btn = document.createElement('button');
+        btn.setAttribute('data-rhythm-id', r.id);
+        btn.className = 'rhythm-btn-remote p-2.5 rounded-lg text-left transition font-semibold text-xs border border-slate-800 bg-black/40 text-slate-300 hover:bg-slate-800';
+        const badgeClass = r.isCrisis 
+          ? 'bg-red-600 text-white font-bold animate-pulse' 
+          : (r.isLethal ? 'bg-red-900 text-red-200' : 'bg-slate-800 text-slate-400');
+        btn.innerHTML = `
+          <div class="flex items-center justify-between">
+            <span class="truncate">${r.name}</span>
+            <span class="text-[9px] font-mono px-1 rounded ${badgeClass}">${r.hr} lpm</span>
+          </div>
+        `;
+        btn.onclick = () => setRhythm(r.id, true);
+        grid.appendChild(btn);
+      });
+    }
+
+    // --- CRONÓMETRO DE SIMULACIÓN Y DEBRIEFING ---
+    let simInterval = null;
+
+    function toggleSimTimer() {
+      AppState.simTimerActive = !AppState.simTimerActive;
+      const btn = document.getElementById('btn-timer-toggle');
+
+      if (AppState.simTimerActive) {
+        btn.innerText = 'Pausar';
+        btn.className = 'bg-amber-800 hover:bg-amber-700 text-xs px-2 py-0.5 rounded text-white border border-amber-600';
+        if (!simInterval) {
+          simInterval = setInterval(() => {
+            AppState.simSeconds++;
+            updateSimTimerDisplay();
+          }, 1000);
+        }
+        addDebriefEntry('Cronómetro de simulación activado');
+      } else {
+        btn.innerText = 'Reanudar';
+        btn.className = 'bg-slate-800 hover:bg-slate-700 text-xs px-2 py-0.5 rounded text-white border border-slate-700';
+        clearInterval(simInterval);
+        simInterval = null;
+        addDebriefEntry('Cronómetro de simulación pausado');
+      }
+    }
+
+    function resetSimTimer() {
+      AppState.simSeconds = 0;
+      updateSimTimerDisplay();
+      addDebriefEntry('Cronómetro reiniciado a cero');
+    }
+
+    function updateSimTimerDisplay() {
+      const hrs = String(Math.floor(AppState.simSeconds / 3600)).padStart(2, '0');
+      const mins = String(Math.floor((AppState.simSeconds % 3600) / 60)).padStart(2, '0');
+      const secs = String(AppState.simSeconds % 60).padStart(2, '0');
+      const str = `${hrs}:${mins}:${secs}`;
+      document.getElementById('sim-timer-display').innerText = str;
+    }
+
+    function addDebriefEntry(text, shouldBroadcast = true) {
+      const hrs = String(Math.floor(AppState.simSeconds / 3600)).padStart(2, '0');
+      const mins = String(Math.floor((AppState.simSeconds % 3600) / 60)).padStart(2, '0');
+      const secs = String(AppState.simSeconds % 60).padStart(2, '0');
+      const timeTag = `[${hrs}:${mins}:${secs}]`;
+
+      const entry = { timeTag, text, timestamp: Date.now() };
+      AppState.debriefLog.unshift(entry);
+
+      const container = document.getElementById('debrief-log-container');
+      if (container) {
+        const item = document.createElement('div');
+        item.className = 'text-slate-300 py-0.5 border-b border-slate-800/40 flex items-start gap-2';
+        item.innerHTML = `<span class="text-emerald-400 font-bold">${timeTag}</span> <span>${text}</span>`;
+        container.insertBefore(item, container.firstChild);
+      }
+
+      if (shouldBroadcast) {
+        sendNetworkMessage('ADD_DEBRIEF_LOG', { text });
+      }
+    }
+
+    function addDebriefNotePrompt() {
+      const note = prompt('Añadir hito de evaluación de enfermería (ej. "Alumnos administran 1mg Adrenalina"):');
+      if (note && note.trim() !== '') {
+        addDebriefEntry(`📌 HITO CLÍNICO: ${note.trim()}`);
+      }
+    }
+
+    function exportDebriefLog() {
+      let output = `=== INFORME DE DEBRIEFING CLÍNICO UCI (SIMULACIÓN ENFERMERÍA) ===\n`;
+      output += `Fecha: ${new Date().toLocaleString()}\n`;
+      output += `Sala: ${AppState.roomCode} | Paciente: González M., Carlos (UCI-04)\n`;
+      output += `Tiempo Total Simulado: ${document.getElementById('sim-timer-display').innerText}\n\n`;
+      output += `REGISTRO CRONOLÓGICO DE EVENTOS E INTERVENCIONES:\n`;
+
+      AppState.debriefLog.slice().reverse().forEach(e => {
+        output += `${e.timeTag} - ${e.text}\n`;
+      });
+
+      copyTextToClipboard(output);
+      showToast('📋 Informe copiado al portapapeles para evaluación');
+    }
+
+    // Reloj y countdown de silenciado
+    function updateClockAndSilencing() {
+      const now = new Date();
+      document.getElementById('live-clock').innerText = 
+        `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+
+      const countEl = document.getElementById('alarm-silence-countdown');
+      if (Date.now() < AppState.audioSilencedUntil) {
+        const left = Math.ceil((AppState.audioSilencedUntil - Date.now()) / 1000);
+        countEl.innerText = `SILENCIADO (${left}s)`;
+        countEl.classList.remove('hidden');
+      } else {
+        countEl.classList.add('hidden');
+      }
+    }
+    setInterval(updateClockAndSilencing, 1000);
+
+    // Sistema de notificaciones Toast visuales
+    let toastTimeout = null;
+    function showToast(msg) {
+      const toast = document.getElementById('toast-message');
+      const text = document.getElementById('toast-text');
+      text.innerText = msg;
+
+      toast.classList.remove('translate-y-20', 'opacity-0');
+      toast.classList.add('translate-y-0', 'opacity-100');
+
+      clearTimeout(toastTimeout);
+      toastTimeout = setTimeout(() => {
+        toast.classList.remove('translate-y-0', 'opacity-100');
+        toast.classList.add('translate-y-20', 'opacity-0');
+      }, 3500);
+    }
+
+    // --- INICIALIZACIÓN DE LA APLICACIÓN AL CARGAR ---
+    window.onload = function () {
+      initRoomIdentity();
+      resizeCanvas();
+      renderRemoteRhythmGrid();
+      updateNumericDisplays();
+
+      // Iniciar bucle de dibujo del monitor a 60 FPS
+      requestAnimationFrame(monitorRenderLoop);
+    };
+  </script>
+</body>
+</html>
